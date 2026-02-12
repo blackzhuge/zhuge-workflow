@@ -2,6 +2,16 @@
   "name": "zhuge-workflow",
   "version": "0.1.0",
   "description": "AI development workflow installer and manager",
+  "author": "blackzhuge",
+  "homepage": "https://github.com/blackzhuge/zhuge-workflow#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackzhuge/zhuge-workflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blackzhuge/zhuge-workflow/issues"
+  },
+  "main": "./dist/index.js",
   "type": "module",
   "bin": {
     "zhuge": "./dist/index.js"
@@ -17,6 +27,9 @@
     "test:e2e": "bash scripts/docker-test.sh",
     "lint": "tsc --noEmit",
     "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "ai",
