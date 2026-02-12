@@ -47,10 +47,9 @@ git push origin --tags
 3. 跑类型检查：`pnpm lint`
 4. 构建：`pnpm build`
 5. 校验 tag 版本与 `package.json` 一致（tag 触发时）
-6. 发布：`npm publish --access public`
+6. 发布：`npm publish --access public --provenance`
 
-> 当前 npm 对 GitHub **private** 仓库的 provenance 校验有限制。
-> 若仓库为 private，请不要使用 `--provenance`。
+> 若仓库改为 private，再切回不带 provenance：`npm publish --access public`。
 
 ## 常见问题
 
