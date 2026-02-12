@@ -62,12 +62,15 @@ describe('initCommand', () => {
     const templatesDir = resolve(testDir, '__templates__')
     mkdirSync(resolve(templatesDir, 'init', 'claude-agents'), { recursive: true })
     writeFileSync(resolve(templatesDir, 'init', 'claude-agents', 'agent.md'), 'agent')
+    mkdirSync(resolve(templatesDir, 'init', 'claude-commands-trellis'), { recursive: true })
+    writeFileSync(resolve(templatesDir, 'init', 'claude-commands-trellis', 'start.md'), '# start')
     vi.mocked(getBundledTemplatesDir).mockReturnValue(templatesDir)
 
     await initCommand()
 
     expect(existsSync(resolve(testDir, '.zhuge/init-state.json'))).toBe(true)
     expect(existsSync(resolve(testDir, 'CLAUDE.md'))).toBe(true)
+    expect(existsSync(resolve(testDir, '.claude/commands/trellis/start.md'))).toBe(true)
     expect(readFileSync(resolve(testDir, '.gitignore'), 'utf-8')).toContain('.zhuge/')
 
     const state = JSON.parse(readFileSync(resolve(testDir, '.zhuge/init-state.json'), 'utf-8'))
