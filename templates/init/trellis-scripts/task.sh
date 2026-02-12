@@ -1128,8 +1128,7 @@ cmd_create_from_phase() {
   "next_action": [
     {"phase": 1, "action": "ccg-impl"},
     {"phase": 2, "action": "ccg-review"},
-    {"phase": 3, "action": "finish"},
-    {"phase": 4, "action": "create-pr"}
+    {"phase": 3, "action": "finish"}
   ],
   "openspec_change": "$change_dir",
   "phase_number": $phase_num,

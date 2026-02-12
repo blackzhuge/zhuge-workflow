@@ -157,6 +157,7 @@ function buildProjectClaudeMd(cwd: string): string {
  * 将 zhuge 增强版文件替换到项目中
  * templates/init/claude-agents/   → {cwd}/.claude/agents/
  * templates/init/claude-hooks/    → {cwd}/.claude/hooks/
+ * templates/init/claude-commands-trellis/ → {cwd}/.claude/commands/trellis/
  * templates/init/trellis-scripts/ → {cwd}/.trellis/scripts/
  */
 function deployInitTemplates(cwd: string) {
@@ -170,6 +171,7 @@ function deployInitTemplates(cwd: string) {
   const mappings: Array<{ source: string; target: string }> = [
     { source: 'claude-agents', target: '.claude/agents' },
     { source: 'claude-hooks', target: '.claude/hooks' },
+    { source: 'claude-commands-trellis', target: '.claude/commands/trellis' },
     { source: 'trellis-scripts', target: '.trellis/scripts' },
   ]
 
