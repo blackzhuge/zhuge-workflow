@@ -73,6 +73,7 @@
 5. 部署增强模板：
    - `templates/init/claude-agents/` → `.claude/agents/`
    - `templates/init/claude-hooks/` → `.claude/hooks/`
+   - `templates/init/claude-commands-trellis/` → `.claude/commands/trellis/`
    - `templates/init/trellis-scripts/` → `.trellis/scripts/`
 6. 若存在 `.gitignore`，自动追加 `.zhuge/`
 

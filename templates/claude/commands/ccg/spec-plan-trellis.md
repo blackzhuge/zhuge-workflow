@@ -200,7 +200,18 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    ./.trellis/scripts/task.sh list
    ```
 
-   **6.5 输出任务执行顺序**
+   **6.5 激活第一个任务**
+
+   自动激活第一个 Phase 的任务，使 hook 能注入 context：
+
+   ```bash
+   # 用第一个 create-from-phase 返回的目录路径
+   ./.trellis/scripts/task.sh start "$FIRST_PHASE_TASK_DIR"
+   ```
+
+   其中 `$FIRST_PHASE_TASK_DIR` 是 Step 6.3 中 Phase 1 的 `create-from-phase` 输出路径。
+
+   **6.6 输出任务执行顺序**
 
    向用户报告创建的任务列表和建议的执行顺序：
 
@@ -209,11 +220,14 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
 
    | Task | Phase | Dev Type | 状态 |
    |------|-------|----------|------|
-   | 02-10-xxx-phase-1 | Phase 1: 后端 DTO | backend | planning |
+   | 02-10-xxx-phase-1 | Phase 1: 后端 DTO | backend | in_progress |
    | 02-10-xxx-phase-2 | Phase 2: 树构建 | backend | planning |
    | 02-10-xxx-phase-3 | Phase 3: API 端点 | backend | planning |
    | ... | ... | ... | ... |
-   
+
+   **下一步**：运行 `/clear` 清理上下文，然后在新 session 中执行：
+   - `/trellis:start` → 自动检测当前任务 → 调用 ccg-impl → ccg-review → finish
+   - 或直接调用 `Task(subagent_type: "ccg-impl")` 开始实现
    ```
 
 7. **Context Checkpoint**
