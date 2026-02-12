@@ -1,0 +1,26 @@
+{
+    "default": "dev",
+    "connections": {
+        "dev": {
+            "server": "localhost",
+            "database": "DevDB",
+            "user": "sa",
+            "password": "your_password_here",
+            "port": 1433
+        },
+        "test": {
+            "server": "test-server.example.com",
+            "database": "TestDB",
+            "user": "test_user",
+            "password": "test_password",
+            "port": 1433
+        },
+        "prod": {
+            "server": "prod-server.example.com",
+            "database": "ProdDB",
+            "user": "app_user",
+            "password": "prod_password",
+            "port": 1433
+        }
+    }
+}

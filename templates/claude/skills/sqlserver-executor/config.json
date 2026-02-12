@@ -1,0 +1,12 @@
+{
+    "default": "dev",
+    "connections": {
+        "dev": {
+            "server": "10.1.173.233",
+            "database": "UFTData416475_210001",
+            "user": "sa",
+            "password": "123",
+            "port": 1433
+        }
+    }
+}
