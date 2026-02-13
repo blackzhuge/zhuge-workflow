@@ -1,13 +1,14 @@
 import { Command } from 'commander'
 import { setupCommand } from './commands/setup.js'
 import { initCommand } from './commands/init.js'
+import { getCliVersion } from './utils/version.js'
 
 const program = new Command()
 
 program
   .name('zhuge')
   .description('AI development workflow installer and manager')
-  .version('0.1.0')
+  .version(getCliVersion())
 
 program
   .command('setup')
