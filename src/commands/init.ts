@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { execInherit, commandExists } from '../utils/shell.js'
 import * as logger from '../utils/logger.js'
 import { getBundledTemplatesDir } from '../core/config-source.js'
+import { getCliVersion } from '../utils/version.js'
 
 export async function initCommand() {
   const cwd = process.cwd()
@@ -75,7 +76,7 @@ async function zhugeOwnInit(cwd: string) {
   // 写入 init 状态记录
   const stateFile = resolve(zhugeDir, 'init-state.json')
   const state = {
-    version: '0.1.0',
+    version: getCliVersion(),
     initializedAt: new Date().toISOString(),
     tools: {
       openspec: existsSync(resolve(cwd, 'openspec')) || existsSync(resolve(cwd, 'specs')),

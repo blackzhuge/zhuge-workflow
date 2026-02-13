@@ -7,6 +7,10 @@ import { commandExists, execInherit } from '../../../src/utils/shell.js'
 import { getBundledTemplatesDir } from '../../../src/core/config-source.js'
 import * as logger from '../../../src/utils/logger.js'
 
+const packageJson = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8')) as {
+  version: string
+}
+
 vi.mock('../../../src/utils/shell.js', () => ({
   commandExists: vi.fn(),
   execInherit: vi.fn(),
@@ -74,7 +78,7 @@ describe('initCommand', () => {
     expect(readFileSync(resolve(testDir, '.gitignore'), 'utf-8')).toContain('.zhuge/')
 
     const state = JSON.parse(readFileSync(resolve(testDir, '.zhuge/init-state.json'), 'utf-8'))
-    expect(state.version).toBe('0.1.0')
+    expect(state.version).toBe(packageJson.version)
     expect(state.tools.openspec).toBe(false)
     expect(state.tools.trellis).toBe(false)
 
