@@ -137,9 +137,9 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    | **总计** | **N** | **0** | **0%** |
    ```
 
-6. **生成 Trellis Tasks（替代 ccg-context.jsonl）**
+6. **生成 Trellis Tasks（智能合并 + 用户确认）**
 
-   基于 tasks.md 的 Phase 结构，为每个 Phase 创建独立的 Trellis Task。
+   基于 tasks.md 的 Phase 结构，智能分析规范差异，合并同类 Phase 后创建 Trellis Task。
 
    **6.1 解析 tasks.md 获取所有 Phase**
 
@@ -159,24 +159,58 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    - 混合内容 → `fullstack`
    - 测试相关 → `test`
 
-   **6.3 为每个 Phase 创建 Trellis Task**
+   **6.3 计算 jsonl 差异矩阵（智能合并分析）**
 
-   对每个 Phase 调用 task.sh：
+   对每个 Phase，模拟 `task.sh create-from-phase` 的 jsonl 生成逻辑，推算 implement.jsonl 将包含的规范文件列表：
 
    ```bash
-   # Phase 1 示例
+   # 读取 task.sh 中的 jsonl 生成函数，获取各 dev_type 实际注入的文件
+   grep -A5 'get_implement_base\|get_implement_backend\|get_implement_frontend' .trellis/scripts/task.sh
+   ```
+
+   根据读取结果，为每个 Phase 构建其 implement.jsonl 文件列表（排除 openspec artifacts，因为所有 Phase 都相同）。
+
+   **差异比较**：逐对比较 Phase 的规范文件列表，计算差异文件数。
+
+   **合并规则**：
+   - 同 dev_type 的 Phase → 规范差异为 0，可合并
+   - 差异 <= 2 个文件 → 可合并
+   - 差异 > 2 个文件 → 必须分开为独立 Task
+
+   **6.4 生成合并计划并确认**
+
+   使用 `AskUserQuestion` 向用户展示合并计划：
+
+   ```
+   根据规范差异分析，建议如下 Task 分组：
+
+   | Task | 包含 Phase | Dev Type | 规范差异 |
+   |------|-----------|----------|---------|
+   | Task 1 | Phase 1, 2, 4 | backend | 0 文件（完全相同） |
+   | Task 2 | Phase 3 | frontend | - |
+
+   原始 4 个 Phase → 合并为 2 个 Task
+
+   选项：
+   1. 接受合并方案（推荐）
+   2. 保持独立（每个 Phase 一个 Task）
+   3. 自定义分组
+   ```
+
+   等待用户确认后再创建。
+
+   **6.5 创建 Trellis Tasks**
+
+   根据用户确认的方案调用 task.sh：
+
+   ```bash
+   # 合并的 Phase 使用 --phases 参数
    ./.trellis/scripts/task.sh create-from-phase \
      --change "$CHANGE_DIR" \
-     --phase 1 \
+     --phases "1,2,4" \
      --dev-type backend
 
-   # Phase 2 示例
-   ./.trellis/scripts/task.sh create-from-phase \
-     --change "$CHANGE_DIR" \
-     --phase 2 \
-     --dev-type backend
-
-   # Phase 3 示例（前端）
+   # 独立的 Phase 使用 --phase 参数
    ./.trellis/scripts/task.sh create-from-phase \
      --change "$CHANGE_DIR" \
      --phase 3 \
@@ -186,32 +220,38 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    **create-from-phase 输出结构**：
 
    ```
-   .trellis/tasks/MM-DD-<change-name>-phase-N/
-   ├── task.json         # 包含 openspec_change, phase_number, ccg-impl action
-   ├── prd.md            # 描述执行哪个 change 的哪个 Phase
+   # 合并 Task
+   .trellis/tasks/MM-DD-<change-name>-phase-1-2-4/
+   ├── task.json         # 包含 phase_numbers: [1,2,4], phase_number: 1
+   ├── prd.md            # 列出所有覆盖的 Phase
    ├── implement.jsonl   # 包含 specs.md, design.md, tasks.md
+   ├── check.jsonl
+   └── debug.jsonl
+
+   # 独立 Task
+   .trellis/tasks/MM-DD-<change-name>-phase-3/
+   ├── task.json         # 包含 phase_number: 3
+   ├── prd.md
+   ├── implement.jsonl
    ├── check.jsonl
    └── debug.jsonl
    ```
 
-   **6.4 列出创建的任务**
+   **6.6 列出创建的任务**
 
    ```bash
    ./.trellis/scripts/task.sh list
    ```
 
-   **6.5 激活第一个任务**
+   **6.7 激活第一个任务**
 
-   自动激活第一个 Phase 的任务，使 hook 能注入 context：
+   自动激活第一个 Task，使 hook 能注入 context：
 
    ```bash
-   # 用第一个 create-from-phase 返回的目录路径
-   ./.trellis/scripts/task.sh start "$FIRST_PHASE_TASK_DIR"
+   ./.trellis/scripts/task.sh start "$FIRST_TASK_DIR"
    ```
 
-   其中 `$FIRST_PHASE_TASK_DIR` 是 Step 6.3 中 Phase 1 的 `create-from-phase` 输出路径。
-
-   **6.6 输出任务执行顺序**
+   **6.8 输出任务执行顺序**
 
    向用户报告创建的任务列表和建议的执行顺序：
 
@@ -220,10 +260,10 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
 
    | Task | Phase | Dev Type | 状态 |
    |------|-------|----------|------|
-   | 02-10-xxx-phase-1 | Phase 1: 后端 DTO | backend | in_progress |
-   | 02-10-xxx-phase-2 | Phase 2: 树构建 | backend | planning |
-   | 02-10-xxx-phase-3 | Phase 3: API 端点 | backend | planning |
-   | ... | ... | ... | ... |
+   | 02-10-xxx-phase-1-2-4 | Phase 1,2,4: 后端修复 + 路径修复 + 回归验证 | backend | in_progress |
+   | 02-10-xxx-phase-3 | Phase 3: 前端 lint 闭环 | frontend | planning |
+
+   原始 N 个 Phase → 合并为 M 个 Task
 
    **下一步**：运行 `/clear` 清理上下文，然后在新 session 中执行：
    - `/trellis:start` → 自动检测当前任务 → 调用 ccg-impl → ccg-review → finish
@@ -241,7 +281,7 @@ A change is ready for implementation only when:
 - [ ] All PBT properties documented with falsification strategies
 - [ ] Artifacts (specs, design, tasks) generated via OpenSpec skills
 - [ ] **tasks.md 包含单元测试和集成测试任务**（无"后续补充"标记）
-- [ ] **Trellis Tasks 已创建**（每个 Phase 一个 Task）
+- [ ] **Trellis Tasks 已创建**（智能合并后，用户已确认分组方案）
 - [ ] User has explicitly approved all constraint decisions
 
 **Reference**
