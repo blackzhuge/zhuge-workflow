@@ -695,23 +695,32 @@ def get_ccg_impl_context(repo_root: str, task_dir: str) -> str:
     if prd_content:
         context_parts.append(f"=== {task_dir}/prd.md (Task Definition) ===\n{prd_content}")
 
-    # 3. Try to extract phase number and read phase-specific tasks
-    # Parse prd.md to get openspec_change and phase_number
+    # 3. Try to extract phase number(s) and read phase-specific tasks
+    # Supports both single phase_number and merged phase_numbers array
     task_json_content = read_file_content(repo_root, f"{task_dir}/{FILE_TASK_JSON}")
     if task_json_content:
         try:
             task_data = json.loads(task_json_content)
             openspec_change = task_data.get("openspec_change")
-            phase_number = task_data.get("phase_number")
+            # Prefer phase_numbers (array) over phase_number (single)
+            phase_numbers = task_data.get("phase_numbers")
+            if not phase_numbers:
+                phase_number = task_data.get("phase_number")
+                phase_numbers = [phase_number] if phase_number else []
 
-            if openspec_change and phase_number:
-                # Read and extract phase-specific section from tasks.md
+            if openspec_change and phase_numbers:
                 tasks_md = read_file_content(repo_root, f"{openspec_change}/tasks.md")
                 if tasks_md:
-                    phase_section = extract_phase_section(tasks_md, phase_number)
-                    if phase_section:
+                    sections = []
+                    for pn in phase_numbers:
+                        section = extract_phase_section(tasks_md, pn)
+                        if section:
+                            sections.append(section)
+                    if sections:
+                        phase_label = ",".join(str(p) for p in phase_numbers)
                         context_parts.append(
-                            f"=== Phase {phase_number} Tasks (from {openspec_change}/tasks.md) ===\n{phase_section}"
+                            f"=== Phase {phase_label} Tasks (from {openspec_change}/tasks.md) ===\n"
+                            + "\n\n".join(sections)
                         )
         except (json.JSONDecodeError, KeyError):
             pass

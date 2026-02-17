@@ -1021,6 +1021,7 @@ cmd_create_pr() {
 cmd_create_from_phase() {
   local change_dir=""
   local phase_num=""
+  local phases_csv=""
   local dev_type="fullstack"
   local priority="P2"
 
@@ -1033,6 +1034,10 @@ cmd_create_from_phase() {
         ;;
       --phase|-p)
         phase_num="$2"
+        shift 2
+        ;;
+      --phases)
+        phases_csv="$2"
         shift 2
         ;;
       --dev-type|-t)
@@ -1050,11 +1055,18 @@ cmd_create_from_phase() {
     esac
   done
 
+  # --phase and --phases are mutually exclusive
+  if [[ -n "$phase_num" ]] && [[ -n "$phases_csv" ]]; then
+    echo -e "${RED}Error: --phase and --phases are mutually exclusive${NC}" >&2
+    exit 1
+  fi
+
   # Validate required fields
-  if [[ -z "$change_dir" ]] || [[ -z "$phase_num" ]]; then
-    echo -e "${RED}Error: --change and --phase are required${NC}" >&2
-    echo "Usage: $0 create-from-phase --change <openspec-change-dir> --phase <N> [--dev-type <type>]" >&2
-    echo "Example: $0 create-from-phase --change openspec/changes/my-feature --phase 1 --dev-type backend" >&2
+  if [[ -z "$change_dir" ]] || { [[ -z "$phase_num" ]] && [[ -z "$phases_csv" ]]; }; then
+    echo -e "${RED}Error: --change and (--phase or --phases) are required${NC}" >&2
+    echo "Usage:" >&2
+    echo "  $0 create-from-phase --change <dir> --phase <N> [--dev-type <type>]" >&2
+    echo "  $0 create-from-phase --change <dir> --phases \"1,2,4\" [--dev-type <type>]" >&2
     exit 1
   fi
 
@@ -1071,17 +1083,49 @@ cmd_create_from_phase() {
     exit 1
   fi
 
-  # Extract phase title from tasks.md
-  # Format: ## Phase N: Title
-  local phase_title=$(grep -E "^## Phase ${phase_num}:" "$tasks_md" | sed "s/^## Phase ${phase_num}: //")
-  if [[ -z "$phase_title" ]]; then
-    echo -e "${RED}Error: Phase $phase_num not found in tasks.md${NC}" >&2
-    exit 1
+  # Build phase list: single or multi
+  local phase_list=()
+  if [[ -n "$phases_csv" ]]; then
+    IFS=',' read -ra phase_list <<< "$phases_csv"
+  else
+    phase_list=("$phase_num")
   fi
 
-  # Generate slug from change name and phase
+  local is_multi=false
+  if [[ ${#phase_list[@]} -gt 1 ]]; then
+    is_multi=true
+  fi
+
+  # Extract and validate phase titles
+  local phase_titles=()
+  for pn in "${phase_list[@]}"; do
+    local title=$(grep -E "^## Phase ${pn}:" "$tasks_md" | sed "s/^## Phase ${pn}: //")
+    if [[ -z "$title" ]]; then
+      echo -e "${RED}Error: Phase $pn not found in tasks.md${NC}" >&2
+      exit 1
+    fi
+    phase_titles+=("$title")
+  done
+
+  # Generate slug and display title
   local change_name=$(basename "$change_dir")
-  local slug="${change_name}-phase-${phase_num}"
+  local slug=""
+  local display_title=""
+  local first_phase="${phase_list[0]}"
+
+  if [[ "$is_multi" == "true" ]]; then
+    # Slug: change-name-phase-1-2-4
+    local phase_suffix=$(IFS='-'; echo "${phase_list[*]}")
+    slug="${change_name}-phase-${phase_suffix}"
+    # Title: "Phase 1,2,4: title1 + title2 + title3"
+    local phase_csv_display=$(IFS=','; echo "${phase_list[*]}")
+    local titles_joined=$(IFS='+'; echo " ${phase_titles[*]}")
+    titles_joined=$(echo "$titles_joined" | sed 's/^ //' | sed 's/+/ + /g')
+    display_title="Phase ${phase_csv_display}: ${titles_joined}"
+  else
+    slug="${change_name}-phase-${first_phase}"
+    display_title="Phase ${first_phase}: ${phase_titles[0]}"
+  fi
 
   # Get current developer
   local developer=$(get_developer "$REPO_ROOT")
@@ -1106,13 +1150,24 @@ cmd_create_from_phase() {
 
   local today=$(date +%Y-%m-%d)
 
+  # Build phase_numbers JSON array and description
+  local phase_numbers_json=""
+  local phase_desc=""
+  if [[ "$is_multi" == "true" ]]; then
+    phase_numbers_json=$(printf '%s\n' "${phase_list[@]}" | jq -s '.')
+    phase_desc="Execute Phases $(IFS=','; echo "${phase_list[*]}") of OpenSpec change: $change_name"
+  else
+    phase_desc="Execute Phase $first_phase of OpenSpec change: $change_name"
+  fi
+
   # Create task.json with ccg-impl as first action
-  cat > "$task_dir/$FILE_TASK_JSON" << EOF
+  if [[ "$is_multi" == "true" ]]; then
+    cat > "$task_dir/$FILE_TASK_JSON" << EOF
 {
   "id": "$slug",
   "name": "$slug",
-  "title": "Phase $phase_num: $phase_title",
-  "description": "Execute Phase $phase_num of OpenSpec change: $change_name",
+  "title": "$display_title",
+  "description": "$phase_desc",
   "status": "planning",
   "dev_type": "$dev_type",
   "scope": "$change_name",
@@ -1131,7 +1186,41 @@ cmd_create_from_phase() {
     {"phase": 3, "action": "finish"}
   ],
   "openspec_change": "$change_dir",
-  "phase_number": $phase_num,
+  "phase_number": $first_phase,
+  "phase_numbers": $phase_numbers_json,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "Auto-generated from OpenSpec change (merged phases)"
+}
+EOF
+  else
+    cat > "$task_dir/$FILE_TASK_JSON" << EOF
+{
+  "id": "$slug",
+  "name": "$slug",
+  "title": "$display_title",
+  "description": "$phase_desc",
+  "status": "planning",
+  "dev_type": "$dev_type",
+  "scope": "$change_name",
+  "priority": "$priority",
+  "creator": "$developer",
+  "assignee": "$developer",
+  "createdAt": "$today",
+  "completedAt": null,
+  "branch": "feature/${change_name}",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {"phase": 1, "action": "ccg-impl"},
+    {"phase": 2, "action": "ccg-review"},
+    {"phase": 3, "action": "finish"}
+  ],
+  "openspec_change": "$change_dir",
+  "phase_number": $first_phase,
   "commit": null,
   "pr_url": null,
   "subtasks": [],
@@ -1139,36 +1228,72 @@ cmd_create_from_phase() {
   "notes": "Auto-generated from OpenSpec change"
 }
 EOF
+  fi
 
   # Create prd.md
-  cat > "$task_dir/prd.md" << EOF
+  local phases_csv_display=$(IFS=','; echo "${phase_list[*]}")
+  if [[ "$is_multi" == "true" ]]; then
+    {
+      echo "# Task: 执行 OpenSpec Change 多 Phase 合并任务"
+      echo ""
+      echo "## Change"
+      echo "$change_dir"
+      echo ""
+      echo "## Phases（必须全部执行）"
+      for i in "${!phase_list[@]}"; do
+        echo "- Phase ${phase_list[$i]}: ${phase_titles[$i]}"
+      done
+      echo ""
+      echo "## 说明"
+      echo "本 Task 合并了 Phase ${phases_csv_display}（规范上下文相同），必须按顺序全部执行。"
+      echo ""
+      echo "按照 ccg-impl 工作流："
+      for pn in "${phase_list[@]}"; do
+        echo "- 读取 $change_dir/tasks.md 中 Phase ${pn} 的任务列表并实现"
+      done
+      echo ""
+      echo "每个 Phase 的执行步骤："
+      echo "1. 读取 $change_dir/specs.md 和 design.md 理解规范和设计"
+      echo "2. 多模型协作实现（后端用 Codex，前端用 Gemini）"
+      echo "3. 外部模型只返回 diff patch，Claude 重写为生产代码"
+      echo "4. 完成后更新 tasks.md 标记 [x]"
+      echo ""
+      echo "完成 Phase ${phase_list[0]} 后继续 Phase ${phase_list[1]}，依此类推直到全部完成。"
+    } > "$task_dir/prd.md"
+  else
+    cat > "$task_dir/prd.md" << EOF
 # Task: 执行 OpenSpec Change Phase
 
 ## Change
 $change_dir
 
 ## Phase
-$phase_num
+$first_phase
 
 ## Phase 标题
-$phase_title
+${phase_titles[0]}
 
 ## 说明
-执行上述 change 的 Phase $phase_num 任务。
+执行上述 change 的 Phase $first_phase 任务。
 
 按照 ccg-impl 工作流：
-1. 读取 $change_dir/tasks.md 中 Phase $phase_num 的任务列表
+1. 读取 $change_dir/tasks.md 中 Phase $first_phase 的任务列表
 2. 读取 $change_dir/specs.md 和 design.md 理解规范和设计
 3. 多模型协作实现（后端用 Codex，前端用 Gemini）
 4. 外部模型只返回 diff patch，Claude 重写为生产代码
 5. 完成后更新 tasks.md 标记 [x]
 EOF
+  fi
 
   # Initialize context files based on dev_type
   echo -e "${CYAN}Initializing context files...${NC}" >&2
 
   # implement.jsonl - add openspec artifacts
   local implement_file="$task_dir/implement.jsonl"
+  local tasks_reason="OpenSpec task list"
+  if [[ "$is_multi" == "true" ]]; then
+    tasks_reason="OpenSpec task list (Phase ${phases_csv_display})"
+  fi
   {
     get_implement_base
     case "$dev_type" in
@@ -1182,7 +1307,7 @@ EOF
     # Add openspec artifacts
     echo "{\"file\": \"$change_dir/specs.md\", \"reason\": \"OpenSpec requirements and constraints\"}"
     echo "{\"file\": \"$change_dir/design.md\", \"reason\": \"OpenSpec technical design\"}"
-    echo "{\"file\": \"$change_dir/tasks.md\", \"reason\": \"OpenSpec task list\"}"
+    echo "{\"file\": \"$change_dir/tasks.md\", \"reason\": \"$tasks_reason\"}"
   } > "$implement_file"
 
   # check.jsonl
@@ -1190,6 +1315,7 @@ EOF
   {
     get_check_context "$dev_type"
     echo "{\"file\": \"$change_dir/specs.md\", \"reason\": \"Verify against OpenSpec requirements\"}"
+    echo "{\"file\": \"$change_dir/tasks.md\", \"reason\": \"Verify task completion ($tasks_reason)\"}"
   } > "$check_file"
 
   # debug.jsonl
@@ -1197,12 +1323,21 @@ EOF
   {
     get_debug_context "$dev_type"
     echo "{\"file\": \"$change_dir/specs.md\", \"reason\": \"Debug against OpenSpec requirements\"}"
+    echo "{\"file\": \"$change_dir/tasks.md\", \"reason\": \"Debug context ($tasks_reason)\"}"
   } > "$debug_file"
 
+  # Output summary
   echo -e "${GREEN}Created task from OpenSpec phase:${NC}" >&2
   echo -e "  Task: $dir_name" >&2
   echo -e "  Change: $change_dir" >&2
-  echo -e "  Phase: $phase_num - $phase_title" >&2
+  if [[ "$is_multi" == "true" ]]; then
+    echo -e "  Phases: $(IFS=','; echo "${phase_list[*]}")" >&2
+    for i in "${!phase_list[@]}"; do
+      echo -e "    - Phase ${phase_list[$i]}: ${phase_titles[$i]}" >&2
+    done
+  else
+    echo -e "  Phase: $first_phase - ${phase_titles[0]}" >&2
+  fi
   echo -e "  Dev Type: $dev_type" >&2
   echo "" >&2
   echo -e "${BLUE}Next steps:${NC}" >&2
@@ -1239,6 +1374,8 @@ Usage:
   $0 list-archive [YYYY-MM]             List archived tasks
   $0 create-from-phase --change <dir> --phase <N> [--dev-type <type>]
                                         Create task from OpenSpec change phase
+  $0 create-from-phase --change <dir> --phases "1,2,4" [--dev-type <type>]
+                                        Create merged task from multiple phases
 
 Arguments:
   dev_type: backend | frontend | fullstack | test | docs

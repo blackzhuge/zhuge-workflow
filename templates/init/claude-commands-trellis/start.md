@@ -185,9 +185,24 @@ Create `prd.md` in the task directory with:
 
 This sets `.current-task` so hooks can inject context.
 
-### Step 7: Implement `[AI]`
+### Step 7: Choose Execution Mode `[AI]`
 
-Call Implement Agent (specs are auto-injected by hook):
+**MANDATORY**: 实现前必须询问用户选择执行模式：
+
+> 任务已就绪，请选择执行模式：
+>
+> 1. **Agent 模式** - 委派给 subagent（ccg-impl/ccg-review）执行。质量更高，specs 通过 hook 自动注入。
+> 2. **直接模式** - 我在当前会话直接实现。
+
+必须等待用户选择后再继续，禁止跳过此步骤。
+
+---
+
+### Step 8: Implement `[AI]`
+
+#### If Agent Mode (MUST use Task tool):
+
+**CRITICAL**: You MUST call the Task tool. Do NOT implement code yourself.
 
 ```
 Task(
@@ -200,9 +215,19 @@ Task(
 )
 ```
 
-### Step 8: Check Quality `[AI]`
+#### If Direct Mode:
 
-Call Check Agent (specs are auto-injected by hook):
+1. Read all relevant specs from implement.jsonl manually
+2. Implement the code yourself following those specs
+3. Run lint and typecheck
+
+---
+
+### Step 9: Check Quality `[AI]`
+
+#### If Agent Mode (MUST use Task tool):
+
+**CRITICAL**: You MUST call the Task tool. Do NOT review code yourself.
 
 ```
 Task(
@@ -215,7 +240,15 @@ Task(
 )
 ```
 
-### Step 9: Complete `[AI]`
+#### If Direct Mode:
+
+1. Read all relevant specs from check.jsonl manually
+2. Self-review your changes against those specs
+3. Fix any issues found
+
+---
+
+### Step 10: Complete `[AI]`
 
 1. Verify lint and typecheck pass
 2. Report what was implemented
