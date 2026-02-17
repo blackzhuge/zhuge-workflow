@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync, readFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, dirname, relative } from 'node:path'
+import { select, confirm } from '@inquirer/prompts'
 import { execInherit, commandExists } from '../utils/shell.js'
 import * as logger from '../utils/logger.js'
 import { getBundledTemplatesDir } from '../core/config-source.js'
@@ -105,7 +106,7 @@ async function zhugeOwnInit(cwd: string) {
   }
 
   // 替换 Trellis/Claude 生成的文件为 zhuge 增强版
-  deployInitTemplates(cwd)
+  await deployInitTemplates(cwd)
 
   // 添加 .zhuge/ 到 .gitignore（如果需要）
   const gitignorePath = resolve(cwd, '.gitignore')
@@ -156,12 +157,13 @@ function buildProjectClaudeMd(cwd: string): string {
 
 /**
  * 将 zhuge 增强版文件替换到项目中
- * templates/init/claude-agents/   → {cwd}/.claude/agents/
- * templates/init/claude-hooks/    → {cwd}/.claude/hooks/
+ * templates/init/claude-agents/        → {cwd}/.claude/agents/
+ * templates/init/claude-hooks/         → {cwd}/.claude/hooks/
  * templates/init/claude-commands-trellis/ → {cwd}/.claude/commands/trellis/
- * templates/init/trellis-scripts/ → {cwd}/.trellis/scripts/
+ * templates/init/trellis-scripts/      → {cwd}/.trellis/scripts/
+ * templates/init/openspec-config/      → {cwd}/openspec/
  */
-function deployInitTemplates(cwd: string) {
+async function deployInitTemplates(cwd: string) {
   const templatesDir = resolve(getBundledTemplatesDir(), 'init')
 
   if (!existsSync(templatesDir)) {
@@ -174,25 +176,77 @@ function deployInitTemplates(cwd: string) {
     { source: 'claude-hooks', target: '.claude/hooks' },
     { source: 'claude-commands-trellis', target: '.claude/commands/trellis' },
     { source: 'trellis-scripts', target: '.trellis/scripts' },
+    { source: 'openspec-config', target: 'openspec' },
   ]
 
-  let count = 0
+  // Phase 1: 收集所有待部署的文件
+  const operations: Array<{ src: string; tgt: string; exists: boolean }> = []
   for (const { source, target } of mappings) {
     const srcDir = resolve(templatesDir, source)
     if (!existsSync(srcDir)) continue
 
-    const tgtDir = resolve(cwd, target)
-    mkdirSync(tgtDir, { recursive: true })
-
     for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
       if (entry.isFile()) {
-        copyFileSync(resolve(srcDir, entry.name), resolve(tgtDir, entry.name))
-        count++
+        const src = resolve(srcDir, entry.name)
+        const tgt = resolve(cwd, target, entry.name)
+        operations.push({ src, tgt, exists: existsSync(tgt) })
       }
     }
   }
 
+  if (operations.length === 0) return
+
+  // Phase 2: 处理已存在的文件
+  const existing = operations.filter((op) => op.exists)
+  let overwritePolicy: 'all' | 'none' | 'ask' = 'all'
+
+  if (existing.length > 0) {
+    console.log()
+    logger.warn(`以下 ${existing.length} 个文件已存在：`)
+    for (const op of existing) {
+      logger.info(`  - ${relative(cwd, op.tgt)}`)
+    }
+    overwritePolicy = await select({
+      message: '如何处理已存在的文件？',
+      choices: [
+        { name: '全部覆盖', value: 'all' as const },
+        { name: '跳过已存在', value: 'none' as const },
+        { name: '逐个确认', value: 'ask' as const },
+      ],
+    })
+  }
+
+  // Phase 3: 部署
+  let count = 0
+  for (const op of operations) {
+    mkdirSync(dirname(op.tgt), { recursive: true })
+
+    if (op.exists) {
+      if (overwritePolicy === 'none') continue
+      if (overwritePolicy === 'ask') {
+        const yes = await confirm({
+          message: `覆盖 ${relative(cwd, op.tgt)}?`,
+          default: false,
+        })
+        if (!yes) continue
+      }
+    }
+
+    copyFileSync(op.src, op.tgt)
+    count++
+  }
+
   if (count > 0) {
     logger.success(`Deployed ${count} zhuge enhanced file(s)`)
+  }
+
+  // 引导用户修改 openspec/config.yaml 中的项目特定配置
+  const configYaml = resolve(cwd, 'openspec/config.yaml')
+  if (existsSync(configYaml)) {
+    console.log()
+    logger.warn('请编辑 openspec/config.yaml 中的项目特定配置：')
+    logger.info('  - context.Tech stack: 修改为你的项目实际技术栈')
+    logger.info('  - context.Domain: 修改为你的项目领域描述')
+    logger.info(`  文件路径: ${configYaml}`)
   }
 }

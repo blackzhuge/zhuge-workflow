@@ -29,6 +29,12 @@ vi.mock('../../../src/utils/logger.js', () => ({
   title: vi.fn(),
 }))
 
+vi.mock('@inquirer/prompts', () => ({
+  select: vi.fn().mockResolvedValue('all'),
+  confirm: vi.fn().mockResolvedValue(true),
+  checkbox: vi.fn().mockResolvedValue([]),
+}))
+
 describe('initCommand', () => {
   let testDir: string
   let oldCwd: string
