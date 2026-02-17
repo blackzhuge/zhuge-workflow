@@ -9,10 +9,13 @@ import {
   readdirSync,
   statSync,
 } from 'node:fs'
+import { select, confirm } from '@inquirer/prompts'
 import type { ConfigDeployRule, ConfigTarget } from './types.js'
 import { getBundledTemplatesDir } from './config-source.js'
 import { expandHome } from '../utils/platform.js'
 import * as logger from '../utils/logger.js'
+
+type OverwritePolicy = 'all' | 'none' | 'ask'
 
 /** 部署配置到目标 */
 export async function deployConfigs(
@@ -21,6 +24,27 @@ export async function deployConfigs(
   const templatesDir = getBundledTemplatesDir()
 
   for (const target of targets) {
+    // Phase 1: 预扫描 replace 策略中已存在的文件
+    const existingFiles = collectExistingReplaceFiles(templatesDir, target)
+
+    let overwritePolicy: OverwritePolicy = 'all'
+    if (existingFiles.length > 0) {
+      console.log()
+      logger.warn(`${target.displayName}: 以下 ${existingFiles.length} 个配置文件已存在：`)
+      for (const f of existingFiles) {
+        logger.info(`  - ${f}`)
+      }
+      overwritePolicy = await select({
+        message: '如何处理已存在的配置文件？',
+        choices: [
+          { name: '全部覆盖（自动备份）', value: 'all' as const },
+          { name: '跳过已存在', value: 'none' as const },
+          { name: '逐个确认', value: 'ask' as const },
+        ],
+      })
+    }
+
+    // Phase 2: 部署
     const spin = logger.spinner(`Deploying configs to ${target.displayName}...`)
 
     try {
@@ -37,10 +61,10 @@ export async function deployConfigs(
         mkdirSync(dirname(targetPath), { recursive: true })
 
         if (statSync(sourcePath).isDirectory()) {
-          deployed += deployDirectory(sourcePath, targetPath, rule.strategy)
+          deployed += await deployDirectory(sourcePath, targetPath, rule.strategy, overwritePolicy)
         } else {
-          deployFile(sourcePath, targetPath, rule)
-          deployed++
+          const ok = await deployFile(sourcePath, targetPath, rule, overwritePolicy)
+          if (ok) deployed++
         }
       }
 
@@ -52,31 +76,80 @@ export async function deployConfigs(
   }
 }
 
-/** 部署单个文件 */
-function deployFile(source: string, target: string, rule: ConfigDeployRule): void {
+/** 收集 replace 策略中已存在的目标文件 */
+function collectExistingReplaceFiles(templatesDir: string, target: ConfigTarget): string[] {
+  const existing: string[] = []
+  for (const rule of target.rules) {
+    if (rule.strategy !== 'replace') continue
+    const sourcePath = resolve(templatesDir, target.name, rule.source)
+    const targetPath = expandHome(rule.target)
+    if (!existsSync(sourcePath)) continue
+
+    if (statSync(sourcePath).isDirectory()) {
+      collectExistingInDir(sourcePath, targetPath, existing)
+    } else if (existsSync(targetPath)) {
+      existing.push(targetPath)
+    }
+  }
+  return existing
+}
+
+/** 递归收集目录中已存在的目标文件 */
+function collectExistingInDir(sourceDir: string, targetDir: string, result: string[]): void {
+  if (!existsSync(targetDir)) return
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const srcPath = resolve(sourceDir, entry.name)
+    const tgtPath = resolve(targetDir, entry.name)
+    if (entry.isDirectory()) {
+      collectExistingInDir(srcPath, tgtPath, result)
+    } else if (existsSync(tgtPath)) {
+      result.push(tgtPath)
+    }
+  }
+}
+
+/** 部署单个文件，返回是否实际部署 */
+async function deployFile(
+  source: string,
+  target: string,
+  rule: ConfigDeployRule,
+  policy: OverwritePolicy,
+): Promise<boolean> {
   switch (rule.strategy) {
     case 'replace':
-      deployReplace(source, target)
-      break
+      return deployReplace(source, target, policy)
     case 'append':
       deployAppend(source, target)
-      break
+      return true
     case 'merge-section':
       if (!rule.sectionMarker) {
         throw new Error(`merge-section requires sectionMarker for ${rule.source}`)
       }
       deployMergeSection(source, target, rule.sectionMarker)
-      break
+      return true
   }
 }
 
-/** 整文件替换（备份旧文件） */
-function deployReplace(source: string, target: string): void {
+/** 整文件替换（备份旧文件），尊重覆盖策略 */
+async function deployReplace(
+  source: string,
+  target: string,
+  policy: OverwritePolicy,
+): Promise<boolean> {
   if (existsSync(target)) {
+    if (policy === 'none') return false
+    if (policy === 'ask') {
+      const yes = await confirm({
+        message: `  覆盖 ${basename(target)}?`,
+        default: false,
+      })
+      if (!yes) return false
+    }
     const backupPath = `${target}.bak.${Date.now()}`
     renameSync(target, backupPath)
   }
   copyFileSync(source, target)
+  return true
 }
 
 /** 追加到文件末尾（幂等：已包含则跳过） */
@@ -120,8 +193,13 @@ function deployMergeSection(
   }
 }
 
-/** 部署整个目录（递归复制） */
-function deployDirectory(sourceDir: string, targetDir: string, _strategy: string): number {
+/** 部署整个目录（递归复制），尊重覆盖策略 */
+async function deployDirectory(
+  sourceDir: string,
+  targetDir: string,
+  _strategy: string,
+  policy: OverwritePolicy,
+): Promise<number> {
   mkdirSync(targetDir, { recursive: true })
   let count = 0
 
@@ -130,8 +208,18 @@ function deployDirectory(sourceDir: string, targetDir: string, _strategy: string
     const tgtPath = resolve(targetDir, entry.name)
 
     if (entry.isDirectory()) {
-      count += deployDirectory(srcPath, tgtPath, _strategy)
+      count += await deployDirectory(srcPath, tgtPath, _strategy, policy)
     } else {
+      if (existsSync(tgtPath)) {
+        if (policy === 'none') continue
+        if (policy === 'ask') {
+          const yes = await confirm({
+            message: `  覆盖 ${basename(tgtPath)}?`,
+            default: false,
+          })
+          if (!yes) continue
+        }
+      }
       copyFileSync(srcPath, tgtPath)
       count++
     }
