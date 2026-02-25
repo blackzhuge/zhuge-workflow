@@ -39,7 +39,7 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    Bash({
      command: "/Users/blackzhuge/.claude/bin/codeagent-wrapper --backend codex - \"$PWD\" <<'EOF'\nAnalyze change <change_id> from backend perspective:\n- Implementation approach\n- Technical risks\n- Alternative architectures\n- Edge cases and failure modes\nOUTPUT: JSON with analysis\nEOF",
      run_in_background: true,
-     timeout: 300000,
+     timeout: 3000000,
      description: "Codex: backend analysis"
    })
    ```
