@@ -54,11 +54,37 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    })
    ```
 
-   **Step 2.2**: After BOTH Bash calls return task IDs, wait for results with TWO TaskOutput calls:
+   **Step 2.2**: Wait for results — **PATIENCE PROTOCOL (MANDATORY)**
+
+   **HARD RULES**:
+   - **NEVER** call `TaskStop` on Codex/Gemini tasks without explicit user approval.
+   - **NEVER** abandon or ignore a running task. If timeout occurs, ASK the user.
+   - Codex is a deep-thinking model — 10-20 minutes is NORMAL. Do NOT treat slow response as failure.
+
+   **Waiting strategy**:
+
+   1. First, try blocking wait (Gemini usually returns fast):
    ```
-   TaskOutput({ task_id: "<codex_task_id>", block: true, timeout: 600000 })
    TaskOutput({ task_id: "<gemini_task_id>", block: true, timeout: 600000 })
    ```
+
+   2. Then wait for Codex with blocking wait:
+   ```
+   TaskOutput({ task_id: "<codex_task_id>", block: true, timeout: 600000 })
+   ```
+
+   3. **If Codex times out** (TaskOutput returns without result), do NOT stop it. Instead:
+      - Use `AskUserQuestion` to ask the user:
+        ```
+        Codex 仍在思考中（已超过 10 分钟），这对复杂分析是正常的。
+        选项：
+        1. 继续等待（推荐）— 再等 10 分钟
+        2. 只用 Gemini 结果继续 — 跳过 Codex
+        3. 终止 Codex 任务
+        ```
+      - If user chooses "继续等待", call `TaskOutput` again with `timeout: 600000`
+      - Repeat this ask-then-wait loop until Codex returns or user chooses to skip/stop
+      - **ONLY** call `TaskStop` if user explicitly chooses "终止"
 
    - Synthesize responses and present consolidated options to user.
 
@@ -161,11 +187,11 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
 
    **6.3 计算 jsonl 差异矩阵（智能合并分析）**
 
-   对每个 Phase，模拟 `task.sh create-from-phase` 的 jsonl 生成逻辑，推算 implement.jsonl 将包含的规范文件列表：
+   对每个 Phase，模拟 `task.py create-from-phase` 的 jsonl 生成逻辑，推算 implement.jsonl 将包含的规范文件列表：
 
    ```bash
-   # 读取 task.sh 中的 jsonl 生成函数，获取各 dev_type 实际注入的文件
-   grep -A5 'get_implement_base\|get_implement_backend\|get_implement_frontend' .trellis/scripts/task.sh
+   # 读取 task.py 中的 jsonl 生成函数，获取各 dev_type 实际注入的文件
+   grep -A5 'get_implement_base\|get_implement_backend\|get_implement_frontend' .trellis/scripts/task.py
    ```
 
    根据读取结果，为每个 Phase 构建其 implement.jsonl 文件列表（排除 openspec artifacts，因为所有 Phase 都相同）。
@@ -201,17 +227,17 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
 
    **6.5 创建 Trellis Tasks**
 
-   根据用户确认的方案调用 task.sh：
+   根据用户确认的方案调用 task.py：
 
    ```bash
    # 合并的 Phase 使用 --phases 参数
-   ./.trellis/scripts/task.sh create-from-phase \
+   python3 ./.trellis/scripts/task.py create-from-phase \
      --change "$CHANGE_DIR" \
      --phases "1,2,4" \
      --dev-type backend
 
    # 独立的 Phase 使用 --phase 参数
-   ./.trellis/scripts/task.sh create-from-phase \
+   python3 ./.trellis/scripts/task.py create-from-phase \
      --change "$CHANGE_DIR" \
      --phase 3 \
      --dev-type frontend
@@ -240,7 +266,7 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    **6.6 列出创建的任务**
 
    ```bash
-   ./.trellis/scripts/task.sh list
+   python3 ./.trellis/scripts/task.py list
    ```
 
    **6.7 激活第一个任务**
@@ -248,7 +274,7 @@ description: '多模型分析 → 消除歧义 → 零决策可执行计划 → 
    自动激活第一个 Task，使 hook 能注入 context：
 
    ```bash
-   ./.trellis/scripts/task.sh start "$FIRST_TASK_DIR"
+   python3 ./.trellis/scripts/task.py start "$FIRST_TASK_DIR"
    ```
 
    **6.8 输出任务执行顺序**
@@ -288,6 +314,6 @@ A change is ready for implementation only when:
 - Inspect change: `/opsx:status <id>`
 - Check conflicts: `/opsx:schemas`
 - Search patterns: `rg -n "INVARIANT:|PROPERTY:" openspec/`
-- List tasks: `./.trellis/scripts/task.sh list`
+- List tasks: `python3 ./.trellis/scripts/task.py list`
 - Use `AskUserQuestion` for ANY ambiguity—never assume
 <!-- CCG:SPEC:PLAN-NEW:END -->

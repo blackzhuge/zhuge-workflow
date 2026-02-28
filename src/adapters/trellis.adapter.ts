@@ -11,7 +11,7 @@ export class TrellisAdapter extends BaseAdapter {
     required: false,
     order: 2,
     interactive: false,
-    pinnedVersion: '0.2.15',
+    pinnedVersion: '0.3.0',
   }
 
   private readonly packageName = '@mindfoldhq/trellis'

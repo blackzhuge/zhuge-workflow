@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, readFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, mkdirSync, copyFileSync, readdirSync, unlinkSync, rmSync } from 'node:fs'
 import { resolve, dirname, relative } from 'node:path'
 import { select, confirm } from '@inquirer/prompts'
 import { execInherit, commandExists } from '../utils/shell.js'
@@ -162,6 +162,7 @@ function buildProjectClaudeMd(cwd: string): string {
  * templates/init/claude-commands-trellis/ → {cwd}/.claude/commands/trellis/
  * templates/init/trellis-scripts/      → {cwd}/.trellis/scripts/
  * templates/init/openspec-config/      → {cwd}/openspec/
+ * templates/claude/commands/ccg/       → {cwd}/.claude/commands/ccg/
  */
 async function deployInitTemplates(cwd: string) {
   const templatesDir = resolve(getBundledTemplatesDir(), 'init')
@@ -175,6 +176,7 @@ async function deployInitTemplates(cwd: string) {
     { source: 'claude-agents', target: '.claude/agents' },
     { source: 'claude-hooks', target: '.claude/hooks' },
     { source: 'claude-commands-trellis', target: '.claude/commands/trellis' },
+    { source: '../claude/commands/ccg', target: '.claude/commands/ccg' },
     { source: 'trellis-scripts', target: '.trellis/scripts' },
     { source: 'openspec-config', target: 'openspec' },
   ]
@@ -240,6 +242,9 @@ async function deployInitTemplates(cwd: string) {
     logger.success(`Deployed ${count} zhuge enhanced file(s)`)
   }
 
+  // Phase 4: 清理 Trellis 0.2.x 遗留的 .sh 脚本（0.3.0 已迁移到 Python）
+  cleanLegacyShellScripts(cwd)
+
   // 引导用户修改 openspec/config.yaml 中的项目特定配置
   const configYaml = resolve(cwd, 'openspec/config.yaml')
   if (existsSync(configYaml)) {
@@ -248,5 +253,59 @@ async function deployInitTemplates(cwd: string) {
     logger.info('  - context.Tech stack: 修改为你的项目实际技术栈')
     logger.info('  - context.Domain: 修改为你的项目领域描述')
     logger.info(`  文件路径: ${configYaml}`)
+  }
+}
+
+/**
+ * 清理 Trellis 0.2.x 遗留的 .sh 脚本和 multi-agent/ 目录
+ * 0.3.0 已全面迁移到 Python，旧 shell 脚本不再需要
+ */
+function cleanLegacyShellScripts(cwd: string) {
+  const scriptsDir = resolve(cwd, '.trellis/scripts')
+  if (!existsSync(scriptsDir)) return
+
+  const cleaned: string[] = []
+
+  // 清理根目录 .sh 文件（只删有对应 .py 的）
+  try {
+    for (const entry of readdirSync(scriptsDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.sh')) continue
+      const pyName = entry.name.replace(/\.sh$/, '.py')
+        .replace(/-/g, '_')
+      if (existsSync(resolve(scriptsDir, pyName))) {
+        unlinkSync(resolve(scriptsDir, entry.name))
+        cleaned.push(entry.name)
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 清理 common/*.sh
+  const commonDir = resolve(scriptsDir, 'common')
+  if (existsSync(commonDir)) {
+    try {
+      for (const entry of readdirSync(commonDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.sh')) continue
+        const pyName = entry.name.replace(/\.sh$/, '.py')
+          .replace(/-/g, '_')
+        if (existsSync(resolve(commonDir, pyName))) {
+          unlinkSync(resolve(commonDir, entry.name))
+          cleaned.push(`common/${entry.name}`)
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 清理旧 multi-agent/ 目录（0.3.0 用 multi_agent/）
+  const oldMultiAgent = resolve(scriptsDir, 'multi-agent')
+  const newMultiAgent = resolve(scriptsDir, 'multi_agent')
+  if (existsSync(oldMultiAgent) && existsSync(newMultiAgent)) {
+    try {
+      rmSync(oldMultiAgent, { recursive: true })
+      cleaned.push('multi-agent/')
+    } catch { /* ignore */ }
+  }
+
+  if (cleaned.length > 0) {
+    logger.success(`Cleaned ${cleaned.length} legacy shell artifact(s)`)
   }
 }
