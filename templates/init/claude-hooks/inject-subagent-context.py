@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Multi-Agent Pipeline Context Injection Hook
 
@@ -21,10 +22,23 @@ Context Source: .trellis/.current-task points to task directory
 - codex-review-output.txt - Code Review results
 """
 
+# IMPORTANT: Suppress all warnings FIRST
+import warnings
+warnings.filterwarnings("ignore")
+
 import json
 import os
 import sys
 from pathlib import Path
+
+# IMPORTANT: Force stdout to use UTF-8 on Windows
+# This fixes UnicodeEncodeError when outputting non-ASCII characters
+if sys.platform == "win32":
+    import io as _io
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    elif hasattr(sys.stdout, "detach"):
+        sys.stdout = _io.TextIOWrapper(sys.stdout.detach(), encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 # =============================================================================
 # Path Constants (change here to rename directories)
@@ -121,7 +135,6 @@ def update_current_phase(repo_root: str, task_dir: str, subagent_type: str) -> N
 
         # Map action names to subagent types
         # "implement" -> "implement", "check" -> "check", "finish" -> "check"
-        # CCG workflow: "ccg-impl" -> "ccg-impl", "ccg-review" -> "ccg-review"
         action_to_agent = {
             "implement": "implement",
             "check": "check",
@@ -360,7 +373,8 @@ def get_finish_context(repo_root: str, task_dir: str) -> str:
     Read order:
     1. All files in finish.jsonl (if exists)
     2. Fallback to finish-work.md only (lightweight final check)
-    3. prd.md (for verifying requirements are met)
+    3. update-spec.md (for active spec sync)
+    4. prd.md (for verifying requirements are met)
     """
     context_parts = []
 
@@ -380,7 +394,16 @@ def get_finish_context(repo_root: str, task_dir: str) -> str:
                 f"=== .claude/commands/trellis/finish-work.md (Finish checklist) ===\n{finish_work}"
             )
 
-    # 2. Requirements document (for verifying requirements are met)
+    # 2. Spec update process (for active spec sync)
+    update_spec = read_file_content(
+        repo_root, ".claude/commands/trellis/update-spec.md"
+    )
+    if update_spec:
+        context_parts.append(
+            f"=== .claude/commands/trellis/update-spec.md (Spec update process) ===\n{update_spec}"
+        )
+
+    # 3. Requirements document (for verifying requirements are met)
     prd_content = read_file_content(repo_root, f"{task_dir}/prd.md")
     if prd_content:
         context_parts.append(
@@ -524,13 +547,19 @@ Finish checklist and requirements:
 
 1. **Review changes** - Run `git diff --name-only` to see all changed files
 2. **Verify requirements** - Check each requirement in prd.md is implemented
-3. **Run final checks** - Execute finish-work.md checklist
-4. **Confirm ready** - Ensure code is ready for PR
+3. **Spec sync** - Analyze whether changes introduce new patterns, contracts, or conventions
+   - If new pattern/convention found: read target spec file → update it → update index.md if needed
+   - If infra/cross-layer change: follow the 7-section mandatory template from update-spec.md
+   - If pure code fix with no new patterns: skip this step
+4. **Run final checks** - Execute lint and typecheck
+5. **Confirm ready** - Ensure code is ready for PR
 
 ## Important Constraints
 
-- This is a final verification, not a fix phase
-- If critical issues found, report them clearly
+- You MAY update spec files when gaps are detected (use update-spec.md as guide)
+- MUST read the target spec file BEFORE editing (avoid duplicating existing content)
+- Do NOT update specs for trivial changes (typos, formatting, obvious fixes)
+- If critical CODE issues found, report them clearly (fix specs, not code)
 - Verify all acceptance criteria in prd.md are met"""
 
 
@@ -674,35 +703,42 @@ Provide structured search results including:
 - External references (if any)"""
 
 
-def get_ccg_impl_context(repo_root: str, task_dir: str) -> str:
-    """
-    Complete context for CCG Implement Agent
+def extract_phase_section(tasks_md: str, phase_number: int) -> str:
+    """Extract a specific phase section from tasks.md"""
+    lines = tasks_md.split("\n")
+    in_phase = False
+    phase_lines = []
+    phase_header = f"## Phase {phase_number}"
 
-    Read order:
-    1. All files in implement.jsonl (includes openspec artifacts)
-    2. prd.md (contains change path and phase number)
-    3. Extract phase-specific tasks from tasks.md
-    """
+    for line in lines:
+        if line.startswith(phase_header):
+            in_phase = True
+            phase_lines.append(line)
+        elif in_phase:
+            if line.startswith("## Phase ") or line.startswith("## 进度统计"):
+                break
+            phase_lines.append(line)
+
+    return "\n".join(phase_lines).strip()
+
+
+def get_ccg_impl_context(repo_root: str, task_dir: str) -> str:
+    """Complete context for CCG Implement Agent"""
     context_parts = []
 
-    # 1. Read implement.jsonl (includes specs.md, design.md, tasks.md from openspec)
     base_context = get_agent_context(repo_root, task_dir, "implement")
     if base_context:
         context_parts.append(base_context)
 
-    # 2. Requirements document (contains change path and phase)
     prd_content = read_file_content(repo_root, f"{task_dir}/prd.md")
     if prd_content:
         context_parts.append(f"=== {task_dir}/prd.md (Task Definition) ===\n{prd_content}")
 
-    # 3. Try to extract phase number(s) and read phase-specific tasks
-    # Supports both single phase_number and merged phase_numbers array
     task_json_content = read_file_content(repo_root, f"{task_dir}/{FILE_TASK_JSON}")
     if task_json_content:
         try:
             task_data = json.loads(task_json_content)
             openspec_change = task_data.get("openspec_change")
-            # Prefer phase_numbers (array) over phase_number (single)
             phase_numbers = task_data.get("phase_numbers")
             if not phase_numbers:
                 phase_number = task_data.get("phase_number")
@@ -728,31 +764,6 @@ def get_ccg_impl_context(repo_root: str, task_dir: str) -> str:
     return "\n\n".join(context_parts)
 
 
-def extract_phase_section(tasks_md: str, phase_number: int) -> str:
-    """
-    Extract a specific phase section from tasks.md
-
-    Looks for pattern: ## Phase N: Title
-    Returns content until next ## Phase or end of file
-    """
-    lines = tasks_md.split("\n")
-    in_phase = False
-    phase_lines = []
-    phase_header = f"## Phase {phase_number}"
-
-    for line in lines:
-        if line.startswith(phase_header):
-            in_phase = True
-            phase_lines.append(line)
-        elif in_phase:
-            # Check if we hit next phase or progress section
-            if line.startswith("## Phase ") or line.startswith("## 进度统计"):
-                break
-            phase_lines.append(line)
-
-    return "\n".join(phase_lines).strip()
-
-
 def build_ccg_impl_prompt(original_prompt: str, context: str) -> str:
     """Build complete prompt for CCG Implement Agent"""
     return f"""# CCG Implement Agent Task
@@ -760,8 +771,6 @@ def build_ccg_impl_prompt(original_prompt: str, context: str) -> str:
 You are the CCG Implement Agent - multi-model collaborative implementation.
 
 ## Your Context
-
-All the information you need has been prepared for you:
 
 {context}
 
@@ -798,28 +807,18 @@ All the information you need has been prepared for you:
 
 
 def get_ccg_review_context(repo_root: str, task_dir: str) -> str:
-    """
-    Complete context for CCG Review Agent
-
-    Read order:
-    1. All files in check.jsonl (review specs)
-    2. prd.md (task requirements)
-    3. OpenSpec specs.md if available
-    """
+    """Complete context for CCG Review Agent"""
     context_parts = []
 
-    # 1. Read check.jsonl
     check_entries = read_jsonl_entries(repo_root, f"{task_dir}/check.jsonl")
     if check_entries:
         for file_path, content in check_entries:
             context_parts.append(f"=== {file_path} ===\n{content}")
 
-    # 2. Requirements document
     prd_content = read_file_content(repo_root, f"{task_dir}/prd.md")
     if prd_content:
         context_parts.append(f"=== {task_dir}/prd.md (Requirements) ===\n{prd_content}")
 
-    # 3. Try to get OpenSpec specs.md from task.json
     task_json_content = read_file_content(repo_root, f"{task_dir}/{FILE_TASK_JSON}")
     if task_json_content:
         try:
@@ -845,8 +844,6 @@ You are the CCG Review Agent - dual-model cross-validation code reviewer.
 
 ## Your Context
 
-All review specs and constraints:
-
 {context}
 
 ---
@@ -859,7 +856,7 @@ All review specs and constraints:
 
 ## Workflow
 
-1. **Get changes** - Run `git diff --name-only` and `git diff` to get code changes
+1. **Get changes** - Run `git diff --name-only` and `git diff`
 2. **Multi-model review (PARALLEL)** - Launch BOTH Codex AND Gemini simultaneously
    - Codex: spec compliance, logic, security, regression
    - Gemini: patterns, maintainability, integration, alignment
@@ -943,11 +940,11 @@ def main():
         context = get_research_context(repo_root, task_dir)
         new_prompt = build_research_prompt(original_prompt, context)
     elif subagent_type == AGENT_CCG_IMPL:
-        assert task_dir is not None  # validated above
+        assert task_dir is not None
         context = get_ccg_impl_context(repo_root, task_dir)
         new_prompt = build_ccg_impl_prompt(original_prompt, context)
     elif subagent_type == AGENT_CCG_REVIEW:
-        assert task_dir is not None  # validated above
+        assert task_dir is not None
         context = get_ccg_review_context(repo_root, task_dir)
         new_prompt = build_ccg_review_prompt(original_prompt, context)
     else:
@@ -956,7 +953,7 @@ def main():
     if not context:
         sys.exit(0)
 
-    # Return updated input
+    # Return updated input with correct Claude Code PreToolUse format
     output = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

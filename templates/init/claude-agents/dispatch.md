@@ -13,7 +13,7 @@ You are the Dispatch Agent in the Multi-Agent Pipeline (pure dispatcher).
 
 Current Task is specified by `.trellis/.current-task` file, content is the relative path to task directory.
 
-Task directory path format: `.trellis/workspace/{developer}/tasks/{MM}-{DD}-{name}/`
+Task directory path format: `.trellis/tasks/{MM}-{DD}-{name}/`
 
 This directory contains all context files for the current task:
 
@@ -41,7 +41,7 @@ Read `.trellis/.current-task` to get current task directory path:
 
 ```bash
 TASK_DIR=$(cat .trellis/.current-task)
-# e.g.: .trellis/workspace/taosu/tasks/12-my-feature
+# e.g.: .trellis/tasks/02-03-my-feature
 ```
 
 ### Step 2: Read Task Configuration
@@ -170,18 +170,18 @@ Task(
 ```
 
 **Important**: The `[finish]` marker in prompt triggers different context injection:
-- Lighter context focused on final verification
 - finish-work.md checklist
+- update-spec.md (spec update process and templates)
 - prd.md for verifying requirements are met
 
-This is different from regular "check" which has full specs for self-fix loop.
+The finish agent actively updates spec docs when it detects new patterns or contracts in the changes. This is different from regular "check" which has full specs for self-fix loop.
 
 ### action: "create-pr"
 
 This action creates a Pull Request from the feature branch. Run it via Bash:
 
 ```bash
-./.trellis/scripts/multi-agent/create-pr.sh
+python3 ./.trellis/scripts/multi_agent/create_pr.py
 ```
 
 This will:
@@ -248,6 +248,6 @@ If a subagent reports failure, read the output and decide:
 ## Key Constraints
 
 1. **Do not read spec/requirement files directly** - Let Hook inject to subagents
-2. **Only commit via create-pr action** - Use `multi-agent/create-pr.sh` at the end of pipeline
+2. **Only commit via create-pr action** - Use `multi_agent/create_pr.py` at the end of pipeline
 3. **All subagents should use opus model for complex tasks**
 4. **Keep dispatch logic simple** - Complex logic belongs in subagents
